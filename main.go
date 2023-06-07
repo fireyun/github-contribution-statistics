@@ -16,52 +16,39 @@ import (
 //go:embed templates/*
 var templates embed.FS
 
-type Commit struct {
-	Title     string `json:"title"`
-	URL       string `json:"html_url"`
-	CreatedAt string `json:"created_at"`
-}
-
-type PullRequest struct {
-	Title     string `json:"title"`
-	URL       string `json:"html_url"`
-	CreatedAt string `json:"created_at"`
-	User      struct {
-		Login string `json:"login"`
-	} `json:"user"`
-}
-
-type Issue struct {
-	Title     string `json:"title"`
-	URL       string `json:"html_url"`
-	CreatedAt string `json:"created_at"`
-	User      struct {
-		Login string `json:"login"`
-	} `json:"user"`
+type SearchResult struct {
+	Items []Content `json:"items"`
 }
 
 type Statistics struct {
-	PRsCount     int           `json:"prs_count"`
-	PRStats      []PullRequest `json:"pr_stats"`
-	IssuesCount  int           `json:"issues_count"`
-	IssueStats   []Issue       `json:"issue_stats"`
-	CommitsCount int           `json:"commits_count,omitempty"`
-	CommitStats  []Commit      `json:"commit_stats,omitempty"`
+	PRsCount     int       `json:"prs_count"`
+	PRStats      []Content `json:"pr_stats"`
+	IssuesCount  int       `json:"issues_count"`
+	IssueStats   []Content `json:"issue_stats"`
+	CommitsCount int       `json:"commits_count,omitempty"`
+	CommitStats  []Content `json:"commit_stats,omitempty"`
 }
 
+type Content struct {
+	Title     string `json:"title"`
+	URL       string `json:"html_url"`
+	CreatedAt string `json:"created_at"`
+}
+
+// API doc: https://docs.github.com/en/rest/search?apiVersion=2022-11-28#search-issues-and-pull-requests
 func getContributorStatistics(repoOwner, repoName, contributorUsername, startDate, endDate string,
 	includeCommits bool, authToken string, debug bool) (Statistics, error) {
-	baseURL := fmt.Sprintf("https://api.github.com/repos/%s/%s", repoOwner, repoName)
+	baseURL := "https://api.github.com/search/issues"
 
 	client := &http.Client{}
 
-	var commitsData []Commit
+	var commitsData []Content
 	var commitsCount int
 
 	if includeCommits {
 		// Commits
-		commitsURL := fmt.Sprintf("%s/commits?author=%s&since=%s&until=%s&per_page=100",
-			baseURL, contributorUsername, startDate, endDate)
+		commitsURL := fmt.Sprintf("%s?q=repo:%s/%s+type:commit+author:%s+created:%s..%s",
+			baseURL, repoOwner, repoName, contributorUsername, startDate, endDate)
 
 		// Create the HTTP request
 		commitsReq, err := http.NewRequest("GET", commitsURL, nil)
@@ -87,16 +74,19 @@ func getContributorStatistics(repoOwner, repoName, contributorUsername, startDat
 		}
 		defer commitsResp.Body.Close()
 
-		if err := decodeResponse(commitsResp, &commitsData); err != nil {
+		var searchResult SearchResult
+		if err := decodeResponse(commitsResp, &searchResult); err != nil {
 			return Statistics{}, err
 		}
+
+		commitsData = searchResult.Items
 		commitsCount = len(commitsData)
 		fmt.Printf("Commits request took %s\n", elapsedTime)
 	}
 
 	// Pull Requests
-	prsURL := fmt.Sprintf("%s/pulls?state=all&since=%s&until=%s&creator=%s&per_page=100",
-		baseURL, startDate, endDate, contributorUsername)
+	prsURL := fmt.Sprintf("%s?q=repo:%s/%s+type:pr+author:%s+created:%s..%s",
+		baseURL, repoOwner, repoName, contributorUsername, startDate, endDate)
 	// Measure the time taken for the PRs request
 	startTime := time.Now()
 	if debug {
@@ -108,23 +98,16 @@ func getContributorStatistics(repoOwner, repoName, contributorUsername, startDat
 		return Statistics{}, err
 	}
 
-	// Filter PRs created by the contributor and within the desired date range
-	var filteredPRs []PullRequest
-	for _, pr := range prsData {
-		if pr.User.Login == contributorUsername && isWithinDateRange(pr.CreatedAt, startDate, endDate) {
-			filteredPRs = append(filteredPRs, pr)
-		}
-	}
-	prsCount := len(filteredPRs)
+	prsCount := len(prsData)
 	fmt.Printf("PRs request took %s\n", elapsedTime)
 
 	// Issues
-	issuesURL := fmt.Sprintf("%s/issues?state=all&since=%s&until=%s&creator=%s&per_page=100",
-		baseURL, startDate, endDate, contributorUsername)
+	issuesURL := fmt.Sprintf("%s?q=repo:%s/%s+type:issue+author:%s+created:%s..%s",
+		baseURL, repoOwner, repoName, contributorUsername, startDate, endDate)
 	// Measure the time taken for the issues request
 	startTime = time.Now()
 	if debug {
-		fmt.Printf("Issue HTTP Request URL: %s\n", prsURL)
+		fmt.Printf("Issue HTTP Request URL: %s\n", issuesURL)
 	}
 	issuesData, err := fetchAllPages(issuesURL, authToken, debug)
 	elapsedTime = time.Since(startTime)
@@ -132,22 +115,15 @@ func getContributorStatistics(repoOwner, repoName, contributorUsername, startDat
 		return Statistics{}, err
 	}
 
-	// Filter issues created by the contributor and within the desired date range
-	var filteredIssues []Issue
-	for _, issue := range issuesData {
-		if issue.User.Login == contributorUsername && isWithinDateRange(issue.CreatedAt, startDate, endDate) {
-			filteredIssues = append(filteredIssues, Issue(issue))
-		}
-	}
-	issuesCount := len(filteredIssues)
+	issuesCount := len(issuesData)
 	fmt.Printf("Issues request took %s\n", elapsedTime)
 
 	// Create the statistics
 	statistics := Statistics{
 		PRsCount:    prsCount,
-		PRStats:     filteredPRs,
+		PRStats:     prsData,
 		IssuesCount: issuesCount,
-		IssueStats:  filteredIssues,
+		IssueStats:  issuesData,
 	}
 
 	if includeCommits {
@@ -158,25 +134,8 @@ func getContributorStatistics(repoOwner, repoName, contributorUsername, startDat
 	return statistics, nil
 }
 
-func isWithinDateRange(date, startDate, endDate string) bool {
-	parsedDate, err := time.Parse(time.RFC3339, date)
-	if err != nil {
-		return false
-	}
-	parsedStartDate, err := time.Parse(time.RFC3339, startDate)
-	if err != nil {
-		return false
-	}
-	parsedEndDate, err := time.Parse(time.RFC3339, endDate)
-	if err != nil {
-		return false
-	}
-
-	return parsedDate.After(parsedStartDate) && parsedDate.Before(parsedEndDate)
-}
-
-func fetchAllPages(url string, authToken string, debug bool) ([]PullRequest, error) {
-	var allData []PullRequest
+func fetchAllPages(url string, authToken string, debug bool) ([]Content, error) {
+	var allData []Content
 	client := &http.Client{}
 
 	for url != "" {
@@ -198,12 +157,12 @@ func fetchAllPages(url string, authToken string, debug bool) ([]PullRequest, err
 		}
 		defer resp.Body.Close()
 
-		var data []PullRequest
-		if err := decodeResponse(resp, &data); err != nil {
+		var searchResult SearchResult
+		if err := decodeResponse(resp, &searchResult); err != nil {
 			return nil, err
 		}
 
-		allData = append(allData, data...)
+		allData = append(allData, searchResult.Items...)
 
 		// Check if there is a next page
 		linkHeader := resp.Header.Get("Link")

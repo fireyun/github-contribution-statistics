@@ -33,6 +33,7 @@ This program retrieves contributor statistics from a GitHub repository, includin
     - `-filename`: Output filename for the generated HTML file (default: `statistics.html`)
     - `-includeCommits`: Include commit data in the statistics (default: `false`)
     - `-authToken`: GitHub authentication token (optional)
+    - `-debug` : Enable debug mode to print HTTP request URLs (default: `true`)
 
    Example usage:
 

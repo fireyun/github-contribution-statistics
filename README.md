@@ -33,6 +33,9 @@
     - `-filename`：生成的 HTML 文件的输出文件名（默认值：`statistics.html`）
     - `-includeCommits`：在统计信息中包括提交数据（默认值：`false`）
     - `-authToken`：GitHub 认证令牌（可选）
+    - `-debug` : 启用调试模式以打印HTTP请求URL（默认值：`true`）
+
+
 
    示例用法：
 
