@@ -1,6 +1,7 @@
 package main
 
 import (
+	"embed"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -11,6 +12,9 @@ import (
 	"text/template"
 	"time"
 )
+
+//go:embed templates/*
+var templates embed.FS
 
 type Commit struct {
 	Title     string `json:"title"`
@@ -46,7 +50,7 @@ type Statistics struct {
 }
 
 func getContributorStatistics(repoOwner, repoName, contributorUsername, startDate, endDate string,
-	includeCommits bool, authToken string) (Statistics, error) {
+	includeCommits bool, authToken string, debug bool) (Statistics, error) {
 	baseURL := fmt.Sprintf("https://api.github.com/repos/%s/%s", repoOwner, repoName)
 
 	client := &http.Client{}
@@ -73,6 +77,9 @@ func getContributorStatistics(repoOwner, repoName, contributorUsername, startDat
 		// Measure the time taken for the commits request
 		startTime := time.Now()
 		// Send the request
+		if debug {
+			fmt.Printf("Commit HTTP Request URL: %s\n", commitsURL)
+		}
 		commitsResp, err := client.Do(commitsReq)
 		elapsedTime := time.Since(startTime)
 		if err != nil {
@@ -92,7 +99,10 @@ func getContributorStatistics(repoOwner, repoName, contributorUsername, startDat
 		baseURL, startDate, endDate, contributorUsername)
 	// Measure the time taken for the PRs request
 	startTime := time.Now()
-	prsData, err := fetchAllPages(prsURL, authToken)
+	if debug {
+		fmt.Printf("PR HTTP Request URL: %s\n", prsURL)
+	}
+	prsData, err := fetchAllPages(prsURL, authToken, debug)
 	elapsedTime := time.Since(startTime)
 	if err != nil {
 		return Statistics{}, err
@@ -113,7 +123,10 @@ func getContributorStatistics(repoOwner, repoName, contributorUsername, startDat
 		baseURL, startDate, endDate, contributorUsername)
 	// Measure the time taken for the issues request
 	startTime = time.Now()
-	issuesData, err := fetchAllPages(issuesURL, authToken)
+	if debug {
+		fmt.Printf("Issue HTTP Request URL: %s\n", prsURL)
+	}
+	issuesData, err := fetchAllPages(issuesURL, authToken, debug)
 	elapsedTime = time.Since(startTime)
 	if err != nil {
 		return Statistics{}, err
@@ -162,7 +175,7 @@ func isWithinDateRange(date, startDate, endDate string) bool {
 	return parsedDate.After(parsedStartDate) && parsedDate.Before(parsedEndDate)
 }
 
-func fetchAllPages(url string, authToken string) ([]PullRequest, error) {
+func fetchAllPages(url string, authToken string, debug bool) ([]PullRequest, error) {
 	var allData []PullRequest
 	client := &http.Client{}
 
@@ -196,7 +209,9 @@ func fetchAllPages(url string, authToken string) ([]PullRequest, error) {
 		linkHeader := resp.Header.Get("Link")
 		nextURL := extractNextPageURL(linkHeader)
 		url = nextURL
-
+		if debug {
+			fmt.Printf("next HTTP Request URL: %s\n", url)
+		}
 		time.Sleep(time.Millisecond * 10)
 	}
 
@@ -223,7 +238,10 @@ func decodeResponse(resp *http.Response, target interface{}) error {
 }
 
 func generateHTML(statistics Statistics, filename string) error {
-	tmpl := template.Must(template.ParseFiles("template.html"))
+	tmpl, err := template.ParseFS(templates, "templates/template.html")
+	if err != nil {
+		return err
+	}
 
 	f, err := os.Create(filename)
 	if err != nil {
@@ -234,11 +252,28 @@ func generateHTML(statistics Statistics, filename string) error {
 	return tmpl.Execute(f, statistics)
 }
 
+func validateTime(startTime, endTime string) {
+	// Parse the start and end dates from the command line flags
+	sDate, err := time.Parse("2006-01-02", startTime)
+	if err != nil {
+		log.Fatalf("Invalid start date format: %s", err)
+	}
+	eDate, err := time.Parse("2006-01-02", endTime)
+	if err != nil {
+		log.Fatalf("Invalid end date format: %s", err)
+	}
+
+	// Ensure that the end date is after the start date
+	if eDate.Before(sDate) {
+		log.Fatal("End date must be after start date")
+	}
+}
+
 func main() {
 	// Get the current time and calculate the start and end dates for the most recent month
 	currentTime := time.Now()
-	startDate := currentTime.AddDate(0, -1, 0).Format(time.RFC3339)
-	endDate := currentTime.Format(time.RFC3339)
+	startDate := currentTime.AddDate(0, -1, 0).Format("2006-01-02")
+	endDate := currentTime.Format("2006-01-02")
 
 	// Command line flags
 	repoOwner := flag.String("repoOwner", "TencentBlueKing", "Repository owner")
@@ -249,10 +284,20 @@ func main() {
 	filename := flag.String("filename", "statistics.html", "Output filename")
 	includeCommits := flag.Bool("includeCommits", false, "Include commit data in statistics")
 	authToken := flag.String("authToken", "", "GitHub authentication token")
+	debug := flag.Bool("debug", true, "Enable debug mode to print HTTP request URLs")
+
 	flag.Parse()
 
+	validateTime(*startDateFlag, *endDateFlag)
+	if *debug {
+		fmt.Println("Debug mode is enabled")
+		flag.VisitAll(func(f *flag.Flag) {
+			fmt.Printf("flag -%s=%s\n", f.Name, f.Value)
+		})
+	}
+
 	statistics, err := getContributorStatistics(*repoOwner, *repoName, *contributorUsername, *startDateFlag,
-		*endDateFlag, *includeCommits, *authToken)
+		*endDateFlag, *includeCommits, *authToken, *debug)
 	if err != nil {
 		log.Fatal(err)
 	}
