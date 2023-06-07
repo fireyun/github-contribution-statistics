@@ -39,8 +39,7 @@
    ```bash
    ./github-contributor-stats -repoOwner=MyUsername -repoName=MyRepository -contributorUsername=MyContributor -startDate=2022-01-01 -endDate=2022-12-31 -filename=stats.html -includeCommits -authToken=MY_AUTH_TOKEN
  
-   不带任何命令行参数直接运行./github-contributor-stats，等同于运行./github-contributor-stats -repoOwner=TencentBlueKing -repoName=bk-bcs 
-   -contributorUsername=fireyun -filename=statistics.html -includeCommits=false
+   不带任何命令行参数直接运行./github-contributor-stats，等同于运行./github-contributor-stats -repoOwner=TencentBlueKing -repoName=bk-bcs -contributorUsername=fireyun -filename=statistics.html -includeCommits=false
    ```
 
 4. 程序运行完成后，将生成一个带有统计信息的 HTML 文件。你可以在网页浏览器中打开该文件以查看结果。 
